@@ -21,11 +21,11 @@ Aither Backend must have its `GITLAB_TOKEN` environment variable set and the end
 
 ## Run a build
 
-1. Open the **Actions** tab.
-2. Select **Build All Aither Nexus Native Apps**.
-3. Choose **Run workflow**.
+Each Aither product has its own workflow in the **Actions** tab. Choose the product you want and select **Run workflow**. Product workflows build only that product's GitLab repository on Windows, macOS, and Linux.
 
-The workflow also runs when its build configuration changes on `main`.
+There is also a **Build All Aither Nexus Native Apps** workflow for building the full product list together.
+
+The product workflows call the shared `.github/workflows/build-one-app.yml` workflow, so packaging and secure token handling stay consistent.
 
 ## Downloads
 
