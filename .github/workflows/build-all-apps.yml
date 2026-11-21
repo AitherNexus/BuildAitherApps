@@ -60,7 +60,7 @@ jobs:
             exit 1
           fi
           echo "::add-mask::$gitlab_token"
-          printf 'GITLAB_TOKEN=%s\n' "$gitlab_token" >> "$GITHUB_ENV"
+          printf 'GITLAB_TOKEN=%s\\n' "$gitlab_token" >> "$GITHUB_ENV"
 
       - name: Build every Aither Nexus project
         env:
@@ -86,8 +86,20 @@ jobs:
           GH_REPO: ${{ github.repository }}
           BUILD_NUMBER: ${{ github.run_number }}
         run: |
+          set -euo pipefail
           tag="aither-apps-build-${BUILD_NUMBER}"
-          gh release create "$tag" release-files/*/*.zip \
-            --repo "$GH_REPO" \
-            --title "Aither Nexus Apps — Build #${BUILD_NUMBER}" \
-            --notes-file BUILD-REPORT.md
+          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "Release $tag already exists; updating its app downloads."
+            gh release upload "$tag" release-files/*/*.zip \
+              --repo "$GH_REPO" \
+              --clobber
+            gh release edit "$tag" \
+              --repo "$GH_REPO" \
+              --title "Aither Nexus Apps — Build #${BUILD_NUMBER}" \
+              --notes-file BUILD-REPORT.md
+          else
+            gh release create "$tag" release-files/*/*.zip \
+              --repo "$GH_REPO" \
+              --title "Aither Nexus Apps — Build #${BUILD_NUMBER}" \
+              --notes-file BUILD-REPORT.md
+          fi
