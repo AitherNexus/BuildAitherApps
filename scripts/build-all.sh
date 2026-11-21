@@ -50,7 +50,7 @@ APPS=(
 if [[ -n "${APP_NAME:-}" && -n "${PROJECT_PATH:-}" ]]; then
   APPS=("${APP_NAME}|${PROJECT_PATH}")
 fi
-APP_COUNT="${APP_COUNT}"
+APP_COUNT="${#APPS[@]}"
 
 success=0
 failed=0
