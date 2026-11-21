@@ -1,0 +1,11 @@
+name: Build AitherCalculator
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-one-app.yml
+    with:
+      app_name: "AitherCalculator"
+      project_path: "aithernexus/AitherCalculator"
