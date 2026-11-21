@@ -1,0 +1,11 @@
+name: Build AitherWeb
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-one-app.yml
+    with:
+      app_name: "AitherWeb"
+      project_path: "aithernexus/AitherWeb"
