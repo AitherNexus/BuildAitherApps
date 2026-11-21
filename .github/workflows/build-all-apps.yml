@@ -65,7 +65,7 @@ jobs:
           BUILD_NUMBER: ${{ github.run_number }}
         run: |
           tag="aither-apps-build-${BUILD_NUMBER}"
-          gh release create "$tag" release-files/**/*.zip \
+          gh release create "$tag" release-files/*/*.zip \
             --repo "$GH_REPO" \
             --title "Aither Nexus Apps — Build #${BUILD_NUMBER}" \
             --notes-file BUILD-REPORT.md
