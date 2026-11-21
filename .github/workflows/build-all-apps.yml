@@ -1,0 +1,71 @@
+name: Build All Aither Nexus Apps
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-all-apps.yml"
+      - "scripts/**"
+      - "apps.json"
+      - "README.md"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aither-nexus-app-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build app bundles
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out BuildAitherApps
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: Build every Aither Nexus project
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          BUILD_NUMBER: ${{ github.run_number }}
+          BUILD_COMMIT: ${{ github.sha }}
+        run: bash scripts/build-all.sh
+
+      - name: Upload complete build files
+        uses: actions/upload-artifact@v4
+        with:
+          name: aither-nexus-all-apps-${{ github.run_number }}
+          path: |
+            release-files/
+            BUILD-REPORT.md
+            apps.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Publish downloadable app bundles
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          tag="aither-apps-build-${BUILD_NUMBER}"
+          gh release create "$tag" release-files/**/*.zip \
+            --repo "$GH_REPO" \
+            --title "Aither Nexus Apps — Build #${BUILD_NUMBER}" \
+            --notes-file BUILD-REPORT.md
