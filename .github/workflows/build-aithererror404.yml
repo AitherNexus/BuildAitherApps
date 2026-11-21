@@ -1,0 +1,11 @@
+name: Build AitherError404
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-one-app.yml
+    with:
+      app_name: "AitherError404"
+      project_path: "aithernexus/AitherError404"
