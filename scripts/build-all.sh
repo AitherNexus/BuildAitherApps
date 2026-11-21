@@ -113,7 +113,33 @@ for entry in "${APPS[@]}"; do
       node -e "const p=require('./package.json');process.exit(p.scripts?.dist?0:1)" 2>/dev/null && npm run dist >>"$WORK/$slug-build.log" 2>&1 || true
       node -e "const p=require('./package.json');process.exit(p.scripts?.make?0:1)" 2>/dev/null && npm run make >>"$WORK/$slug-build.log" 2>&1 || true
       node -e "const p=require('./package.json');process.exit(p.scripts?.package?0:1)" 2>/dev/null && npm run package >>"$WORK/$slug-build.log" 2>&1 || true
+
+      # Build native desktop packages when the project declares a supported toolchain.
+      desktop_status=""
+      if node -e "const p=require('./package.json');process.exit(p.devDependencies?.['electron-builder']||p.dependencies?.['electron-builder']?0:1)" 2>/dev/null; then
+        if npx electron-builder --linux AppImage deb >>"$WORK/$slug-build.log" 2>&1; then
+          desktop_status="Electron Builder Linux AppImage/DEB package built"
+        else
+          desktop_status="Electron Builder detected, but Linux installer build failed"
+          build_ok=0
+        fi
+      elif node -e "const p=require('./package.json');process.exit(p.devDependencies?.['@electron-forge/cli']||p.dependencies?.['@electron-forge/cli']?0:1)" 2>/dev/null; then
+        if npm run make >>"$WORK/$slug-build.log" 2>&1; then
+          desktop_status="Electron Forge desktop package built"
+        else
+          desktop_status="Electron Forge detected, but desktop packaging failed"
+          build_ok=0
+        fi
+      elif node -e "const p=require('./package.json');process.exit(p.scripts?.['tauri']||p.devDependencies?.['@tauri-apps/cli']||p.dependencies?.['@tauri-apps/cli']?0:1)" 2>/dev/null; then
+        if npm run tauri -- build >>"$WORK/$slug-build.log" 2>&1; then
+          desktop_status="Tauri desktop package built for the runner platform"
+        else
+          desktop_status="Tauri detected, but desktop packaging failed"
+          build_ok=0
+        fi
+      fi
       if [[ "$build_ok" == "1" ]]; then build_status="Build command completed"; else build_status="Build command failed; source and any generated output still packaged"; fi
+      [[ -n "$desktop_status" ]] && build_status="$build_status; $desktop_status"
     else
       build_status="Dependency installation failed; source still packaged"
     fi
@@ -140,7 +166,7 @@ for entry in "${APPS[@]}"; do
   rm -rf "$stage"
   mkdir -p "$stage"
   found=0
-  for folder in dist build out public desktop artifacts; do
+  for folder in dist build out public desktop artifacts release; do
     if [[ -d "$src/$folder" ]]; then
       mkdir -p "$stage/$folder"
       cp -a "$src/$folder/." "$stage/$folder/"
@@ -155,11 +181,34 @@ for entry in "${APPS[@]}"; do
     find "$stage/site" -type f \( -name '.env' -o -name '.env.*' -o -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.pfx' \) -delete
     found=1
   fi
+  # Every project gets a distinct app download plus separate source/build archives.
   if [[ "$found" == "1" ]]; then
     (cd "$stage" && zip -qr "$dest/$slug-build-output.zip" .)
+    cat > "$stage/APP-DOWNLOAD-README.md" <<APPREADME
+# $app app download
+
+This archive contains generated app files from the latest build attempt.
+Use a platform installer in the archive when one is present. For web apps,
+serve the included site/build folder using a static web server.
+
+Build status: $build_status
+Source code: https://gitlab.com/$project
+APPREADME
   else
-    printf '%s\n' "No separate build-output directory or static index.html was generated. The complete project is available in the source archive." > "$dest/BUILD-OUTPUT-NOT-FOUND.txt"
+    mkdir -p "$stage/project-source"
+    (cd "$src" && zip -qr "$stage/project-source/$slug-source.zip" . -x ".git/*" "node_modules/*" ".venv/*" "venv/*" ".env" ".env.*" "**/.env" "**/.env.*" "*.pem" "*.key" "*.p12" "*.pfx")
+    cat > "$stage/APP-DOWNLOAD-README.md" <<APPREADME
+# $app app download
+
+No generated installer/build folder was detected in this run.
+The project source is included in this app bundle, but it still needs
+its project-specific build/runtime setup before native installation.
+
+Build status: $build_status
+Source code: https://gitlab.com/$project
+APPREADME
   fi
+  (cd "$stage" && zip -qr "$dest/$slug-app.zip" .)
 
   printf '# %s\n\n- GitLab project: https://gitlab.com/%s\n- Build result: %s\n- Source archive: %s-source.zip\n' "$app" "$project" "$build_status" "$slug" > "$dest/BUILD-INFO.md"
   [[ -f "$WORK/$slug-build.log" ]] && cp "$WORK/$slug-build.log" "$dest/build.log"
@@ -167,7 +216,11 @@ for entry in "${APPS[@]}"; do
   [[ -f "$WORK/$slug-python.log" ]] && cp "$WORK/$slug-python.log" "$dest/python-check.log"
 
   echo "- Result: **$build_status**" >> "$REPORT"
-  echo "- Downloads: $slug-source.zip and generated build output when available." >> "$REPORT"
+  echo "- Individual app download: [$slug-app.zip](https://github.com/$GITHUB_REPOSITORY/releases/download/aither-apps-build-\${BUILD_NUMBER:-local}/$slug-app.zip)" >> "$REPORT"
+  echo "- Source archive: [$slug-source.zip](https://github.com/$GITHUB_REPOSITORY/releases/download/aither-apps-build-\${BUILD_NUMBER:-local}/$slug-source.zip)" >> "$REPORT"
+  if [[ -f "$dest/$slug-build-output.zip" ]]; then
+    echo "- Build output: [$slug-build-output.zip](https://github.com/$GITHUB_REPOSITORY/releases/download/aither-apps-build-\${BUILD_NUMBER:-local}/$slug-build-output.zip)" >> "$REPORT"
+  fi
   echo >> "$REPORT"
   if [[ "$build_status" == *failed* || "$build_status" == *Failure* ]]; then
     failed=$((failed+1))
