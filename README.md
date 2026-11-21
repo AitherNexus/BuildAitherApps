@@ -6,14 +6,14 @@ This repository uses **GitHub Actions** to clone the Aither Nexus projects from 
 
 ## One-time setup (required for private projects)
 
-Most Aither Nexus repositories are private on GitLab. Create a GitLab Personal Access Token with **read_repository** scope, then add it to this GitHub repository:
+Most Aither Nexus repositories are private on GitLab. Without a token, the workflow still packages the public AitherNexus portal and AitherBackend, and marks private projects as skipped. To build the complete app list, create a GitLab Personal Access Token with **read_repository** scope, then add it to this GitHub repository:
 
 1. Open **Settings → Secrets and variables → Actions**.
 2. Choose **New repository secret**.
 3. Name it exactly `GITLAB_TOKEN`.
 4. Paste the GitLab token as the value and save.
 
-The token is only used by the workflow to clone your GitLab projects. It is not written into the generated archives or logs. Do not put it in a file or commit it.
+The token is only used by the workflow to clone your GitLab projects. It is not written into the generated archives or logs. Do not put it in a file or commit it. After saving the secret, run the workflow again to build all private projects too.
 
 ## Run a build
 
