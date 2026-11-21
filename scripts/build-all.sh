@@ -10,8 +10,7 @@ mkdir -p "$OUT" "$WORK"
 : > "$REPORT"
 
 if [[ -z "${GITLAB_TOKEN:-}" ]]; then
-  echo "GITLAB_TOKEN is missing. Add a GitLab Personal Access Token with read_repository scope as a GitHub Actions secret named GITLAB_TOKEN." >&2
-  exit 1
+  echo "GITLAB_TOKEN is not set. Building public projects only; private projects will be listed as skipped."
 fi
 
 cat > "$REPORT" <<EOF
@@ -53,6 +52,7 @@ APPS=(
 
 ok=0
 failed=0
+skipped=0
 for entry in "${APPS[@]}"; do
   app="${entry%%|*}"
   project="${entry#*|}"
@@ -64,7 +64,24 @@ for entry in "${APPS[@]}"; do
   echo "- GitLab: https://gitlab.com/$project" >> "$REPORT"
 
   rm -rf "$src"
-  if ! git -c advice.detachedHead=false clone --quiet --depth 1 "https://oauth2:${GITLAB_TOKEN}@gitlab.com/$project.git" "$src" 2>"$WORK/$slug-clone.log"; then
+  clone_url=""
+  if [[ -n "${GITLAB_TOKEN:-}" ]]; then
+    clone_url="https://oauth2:${GITLAB_TOKEN}@gitlab.com/$project.git"
+  else
+    case "$project" in
+      aithernexus/AitherNexus|aithernexus/AitherBackend)
+        clone_url="https://gitlab.com/$project.git"
+        ;;
+      *)
+        echo "- Result: **SKIPPED** — private GitLab repository; add the `GITLAB_TOKEN` Actions secret to include it." >> "$REPORT"
+        echo >> "$REPORT"
+        printf 'Private project. Add GITLAB_TOKEN to GitHub Actions secrets to download this app.\n' > "$dest/PRIVATE-REPOSITORY-NEEDS-TOKEN.txt"
+        skipped=$((skipped+1))
+        continue
+        ;;
+    esac
+  fi
+  if ! git -c advice.detachedHead=false clone --quiet --depth 1 "$clone_url" "$src" 2>"$WORK/$slug-clone.log"; then
     echo "- Result: **DOWNLOAD FAILED** (check token access and project path)." >> "$REPORT"
     cp "$WORK/$slug-clone.log" "$dest/clone-error.log" 2>/dev/null || true
     failed=$((failed+1))
@@ -158,9 +175,10 @@ cat >> "$REPORT" <<EOF
 - Projects packaged: $((ok+failed)) / ${#APPS[@]}
 - Completed without reported build errors: $ok
 - Projects with build/download issues: $failed
+- Private projects skipped because GITLAB_TOKEN is missing: $skipped
 
 Each app folder in `release-files/` contains its source archive, generated output archive when available, build information, and relevant logs.
 EOF
 
 # Always let the workflow publish successful packages and the report.
-echo "Packaged $((ok+failed)) projects; $failed had issues."
+echo "Packaged $((ok+failed)) projects; skipped $skipped private projects; $failed had issues."
