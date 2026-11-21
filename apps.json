@@ -103,11 +103,6 @@
       "gitlab_url": "https://gitlab.com/aithernexus/aitherweather"
     },
     {
-      "name": "AitherBackend",
-      "gitlab_path": "aithernexus/AitherBackend",
-      "gitlab_url": "https://gitlab.com/aithernexus/AitherBackend"
-    },
-    {
       "name": "AitherPrivacy",
       "gitlab_path": "aithernexus/privacy",
       "gitlab_url": "https://gitlab.com/aithernexus/privacy"
