@@ -1,44 +1,45 @@
 # BuildAitherApps
 
-One place to build and download the Aither Nexus apps.
+Builds native installable versions of the Aither Nexus apps where the app repository has a supported desktop or mobile wrapper.
 
-This repository uses **GitHub Actions** to clone the Aither Nexus projects from GitLab, run their available build scripts, and publish downloadable bundles.
+## Native build targets
+
+GitHub Actions builds on three operating systems:
+- Windows: `.exe` and `.msi` (Electron Builder)
+- macOS: `.dmg` installer containing the `.app` bundle (and the raw `.app` directory in the Actions artifact)
+- Linux: `.AppImage`, `.deb`, and `.rpm` where supported
+- Android: `.apk` and `.aab` when a Gradle Android project exists
+- iOS: `.ipa` only when a properly configured iOS project and signing setup are available
+
+**No source code is published. No source-code ZIPs or all-app ZIPs are created.** Only actual native installer/application outputs are published. Website HTML, CSS, JavaScript, repository files, and build source are never copied into the download area.
 
 ## Secure GitLab access
 
-BuildAitherApps retrieves the existing `GITLAB_TOKEN` from Aither Backend at build time. GitHub Actions requests a short-lived GitHub OIDC identity token and sends it to `https://aitherbackend.onrender.com/api/build/gitlab-token`. Aither Backend verifies that the caller is this repository's workflow on `main` before returning the token. The GitLab token is not stored as a GitHub secret, printed in logs, or included in app archives.
+BuildAitherApps retrieves the existing `GITLAB_TOKEN` from Aither Backend at build time. GitHub Actions requests a short-lived GitHub OIDC identity token and sends it to `https://aitherbackend.onrender.com/api/build/gitlab-token`. Aither Backend verifies the caller before returning the token. The GitLab token is not stored in this repository or included in downloads.
 
-The workflow requires the `id-token: write` permission, which is configured in the workflow file. Aither Backend must have its `GITLAB_TOKEN` environment variable set. Only the `AitherNexus/BuildAitherApps` workflow on `main` is allowed to request it.
+Aither Backend must have its `GITLAB_TOKEN` environment variable set and the endpoint must authorize this repository's workflow.
 
 ## Run a build
 
-- Open the **Actions** tab.
-- Select **Build All Aither Nexus Apps**.
-- Choose **Run workflow**.
+1. Open the **Actions** tab.
+2. Select **Build All Aither Nexus Native Apps**.
+3. Choose **Run workflow**.
 
-The workflow also runs when the build configuration or build scripts are updated on `main`.
+The workflow also runs when its build configuration changes on `main`.
 
-## Where downloads appear
+## Downloads
 
-Every run publishes two ways to get the files:
+- [Latest native app releases](../../releases)
+- [Build runs and per-platform reports](../../actions/workflows/build-all-apps.yml)
 
-- **Actions artifact**: a complete bundle named `aither-nexus-all-apps-<run>`, including separate app folders containing generated app files, build logs, and the build report. Actions artifacts are retained for 30 days.
-- **GitHub Release**: a permanent release for that run with each generated app file published as its own download. No ZIP or source-code archive is generated.
+Every generated installer is uploaded as its own release asset, named with the app and platform. The Actions artifacts retain app-specific output folders and macOS `.app` bundles.
 
-Open the [latest release downloads](../../releases/latest). The release notes contain direct links to each individual app. You do not have to download the all-apps bundle to get just one app.
+## Important build requirement
 
-Open [latest builds](../../actions/workflows/build-all-apps.yml) or [releases](../../releases).
+A website is not automatically a Windows, Mac, or Android app. Each project must include a native packaging setup such as Electron, Tauri, Capacitor with an Android project, or a native Gradle project. This workflow detects supported configurations and builds them on the correct operating system. Projects without a native wrapper will be reported as having no native installer; the workflow will not disguise website/source files as an app download.
 
-## What gets included
-
-The build list is in [apps.json](apps.json). It currently includes the active Aither Nexus apps and supporting projects: AitherCore, AitherHomeOS, AitherCloud, AitherChat, AitherSignIn, AitherNexus, AitherWeb, AitherGaming, AitherMail, AitherAppDownloads, AitherApps, AitherFiles, AitherError404, AitherClock, AitherAI, AitherCalculator, AitherMaps, AitherDashboard, AitherNotes, AitherWeather, AitherPrivacy, and AitherTerms.
-
-For each project, the workflow runs its available npm build and collects deployable files from generated `dist`, `build`, `out`, `release`, or `artifacts` folders. Static websites can also be published from `public` or their root web files. Each output file is kept separately in the Actions artifact and uploaded as its own GitHub Release asset; there are no ZIP downloads and no source-code archives.
-
-For projects that already use Electron Builder, it also attempts Windows portable ZIP and Linux AppImage/DEB desktop packages. Electron Forge and Tauri projects are packaged when their project configuration supports those build commands. These native installers are not magically created for projects that are only websites or APIs: those projects still receive their own app/source bundle, and need a desktop wrapper or native project configuration before they can produce a Windows/macOS installer.
-
-A project build error is recorded in its log and report without preventing the other apps from being packaged.
+A macOS `.app` is a folder bundle, so the convenient installable download is a `.dmg` containing that `.app`. GitHub Releases receive the `.dmg`; the raw `.app` bundle is retained in the Actions artifact.
 
 ## Cost
 
-The workflow uses GitHub-hosted Actions runners and GitHub's artifact/release storage. GitHub's usage limits and retention policies apply; this repository does not create a Render service or other paid hosting resource.
+This workflow uses GitHub-hosted runners and GitHub artifact/release storage. GitHub usage limits and retention policies apply. It does not create a Render service or other paid hosting resource.
