@@ -3,6 +3,7 @@ set -uo pipefail
 set +x
 
 ROOT="$(pwd)"
+PLATFORM="${BUILD_PLATFORM:-linux}"
 OUT="$ROOT/release-files"
 ASSETS="$ROOT/release-assets"
 WORK="$ROOT/.build-work"
@@ -11,16 +12,15 @@ mkdir -p "$OUT" "$ASSETS" "$WORK"
 : > "$REPORT"
 
 cat > "$REPORT" <<EOF
-# Aither Nexus Apps — Build Report
+# Aither Nexus Native App Build Report
 
 - Build: ${BUILD_NUMBER:-local}
+- Platform: $PLATFORM
 - Commit: ${BUILD_COMMIT:-unknown}
-- Date: $(date -u +"%Y-%m-%d %H:%M UTC")
 
-This build publishes individual app files. It does not create source-code archives or ZIP downloads.
+Only installable application packages are published. Repository source files, website files, source archives, and ZIP bundles are excluded.
 EOF
 
-# Display name | exact GitLab project path
 APPS=(
   "AitherCore|aithernexus/aithercore"
   "AitherHomeOS|aithernexus/aitherhomeos"
@@ -46,7 +46,7 @@ APPS=(
   "AitherTerms|aithernexus/terms"
 )
 
-ok=0
+success=0
 failed=0
 skipped=0
 
@@ -58,134 +58,101 @@ for entry in "${APPS[@]}"; do
   dest="$OUT/$slug"
   mkdir -p "$dest"
   echo "## $app" >> "$REPORT"
-  echo "- GitLab project: https://gitlab.com/$project" >> "$REPORT"
+  echo "- Source project: https://gitlab.com/$project" >> "$REPORT"
 
   rm -rf "$src"
   if [[ -z "${GITLAB_TOKEN:-}" && "$project" != "aithernexus/AitherNexus" ]]; then
-    echo "- Result: **SKIPPED** — GITLAB_TOKEN is missing." >> "$REPORT"
-    skipped=$((skipped+1))
-    echo >> "$REPORT"
-    continue
+    echo "- Result: **SKIPPED** — GitLab token unavailable." >> "$REPORT"
+    skipped=$((skipped+1)); echo >> "$REPORT"; continue
   fi
-
   if [[ -n "${GITLAB_TOKEN:-}" ]]; then
     clone_url="https://oauth2:${GITLAB_TOKEN}@gitlab.com/$project.git"
   else
     clone_url="https://gitlab.com/$project.git"
   fi
-
   if ! git -c advice.detachedHead=false clone --quiet --depth 1 "$clone_url" "$src" 2>"$WORK/$slug-clone.log"; then
-    echo "- Result: **DOWNLOAD FAILED** — see build artifact logs." >> "$REPORT"
-    cp "$WORK/$slug-clone.log" "$dest/download-error.txt" 2>/dev/null || true
-    failed=$((failed+1))
-    echo >> "$REPORT"
-    continue
+    echo "- Result: **DOWNLOAD FAILED**." >> "$REPORT"
+    failed=$((failed+1)); echo >> "$REPORT"; continue
   fi
 
-  build_status="No build configuration detected"
-  build_ok=1
+  status="No native packaging configuration found"
   if [[ -f "$src/package.json" ]]; then
     pushd "$src" >/dev/null
     if [[ -f package-lock.json || -f npm-shrinkwrap.json ]]; then
-      npm ci --no-audit --no-fund >"$WORK/$slug-install.log" 2>&1 || build_ok=0
+      npm ci --no-audit --no-fund >"$WORK/$slug-install.log" 2>&1 || true
     else
-      npm install --no-audit --no-fund >"$WORK/$slug-install.log" 2>&1 || build_ok=0
+      npm install --no-audit --no-fund >"$WORK/$slug-install.log" 2>&1 || true
     fi
 
-    if [[ "$build_ok" == "1" ]]; then
-      if node -e "const p=require('./package.json');process.exit(p.scripts?.build?0:1)" 2>/dev/null; then
-        npm run build >"$WORK/$slug-build.log" 2>&1 || build_ok=0
-        build_status="npm build completed"
-      else
-        build_status="No npm build script; checking for deployable app files"
-      fi
-      # Only run desktop packaging scripts that the project explicitly defines.
-      if node -e "const p=require('./package.json');process.exit(p.scripts?.dist?0:1)" 2>/dev/null; then
-        npm run dist >>"$WORK/$slug-build.log" 2>&1 || build_ok=0
-      fi
-      if node -e "const p=require('./package.json');process.exit(p.scripts?.make?0:1)" 2>/dev/null; then
-        npm run make >>"$WORK/$slug-build.log" 2>&1 || build_ok=0
-      fi
-      if node -e "const p=require('./package.json');process.exit(p.scripts?.package?0:1)" 2>/dev/null; then
-        npm run package >>"$WORK/$slug-build.log" 2>&1 || build_ok=0
-      fi
-    else
-      build_status="Dependency installation failed"
+    # Build the web bundle only as an input to a declared native wrapper.
+    node -e "const p=require('./package.json');process.exit(p.scripts?.build?0:1)" 2>/dev/null && npm run build >"$WORK/$slug-build.log" 2>&1 || true
+
+    # Electron Builder produces platform-native installers, not source bundles.
+    if node -e "const p=require('./package.json');process.exit(p.devDependencies?.['electron-builder']||p.dependencies?.['electron-builder']?0:1)" 2>/dev/null; then
+      case "$PLATFORM" in
+        windows) npx electron-builder --win nsis portable >>"$WORK/$slug-native.log" 2>&1 && status="Windows EXE installer/portable app built" || status="Windows EXE packaging failed" ;;
+        macos) npx electron-builder --mac dmg >>"$WORK/$slug-native.log" 2>&1 && status="macOS DMG installer built (contains the .app)" || status="macOS packaging failed" ;;
+        linux) npx electron-builder --linux AppImage deb >>"$WORK/$slug-native.log" 2>&1 && status="Linux AppImage/DEB packages built" || status="Linux packaging failed" ;;
+      esac
+    fi
+
+    # Tauri builds natively for the current runner OS.
+    if node -e "const p=require('./package.json');process.exit(p.devDependencies?.['@tauri-apps/cli']||p.dependencies?.['@tauri-apps/cli']?0:1)" 2>/dev/null; then
+      npm run tauri -- build >>"$WORK/$slug-native.log" 2>&1 && status="Tauri native package built" || status="Tauri native packaging failed"
     fi
     popd >/dev/null
   fi
 
-  # Collect only deployable output, never the repository/source tree or node_modules.
-  picked=0
-  for folder in dist build out release artifacts; do
-    if [[ -d "$src/$folder" ]]; then
-      while IFS= read -r -d '' file; do
-        rel="${file#"$src/$folder/"}"
-        mkdir -p "$dest/$(dirname "$rel")"
-        cp "$file" "$dest/$rel"
-        picked=$((picked+1))
-      done < <(find "$src/$folder" -type f \
-        ! -path '*/node_modules/*' ! -name '.env' ! -name '.env.*' \
-        ! -name '*.pem' ! -name '*.key' ! -name '*.p12' ! -name '*.pfx' -print0)
-    fi
-  done
-
-  # Static sites without a build output are still publishable from their public web root.
-  if [[ "$picked" -eq 0 ]]; then
-    for folder in public; do
-      if [[ -d "$src/$folder" ]]; then
-        while IFS= read -r -d '' file; do
-          rel="${file#"$src/$folder/"}"
-          mkdir -p "$dest/$(dirname "$rel")"
-          cp "$file" "$dest/$rel"
-          picked=$((picked+1))
-        done < <(find "$src/$folder" -type f \
-          ! -path '*/node_modules/*' ! -name '.env' ! -name '.env.*' \
-          ! -name '*.pem' ! -name '*.key' ! -name '*.p12' ! -name '*.pfx' -print0)
-      fi
-    done
-  fi
-  if [[ "$picked" -eq 0 && -f "$src/index.html" ]]; then
-    while IFS= read -r -d '' file; do
-      rel="${file#"$src/"}"
-      mkdir -p "$dest/$(dirname "$rel")"
-      cp "$file" "$dest/$rel"
-      picked=$((picked+1))
-    done < <(find "$src" -maxdepth 3 -type f \
-      ! -path '*/.git/*' ! -path '*/node_modules/*' ! -path '*/desktop/*' \
-      ! -name 'package.json' ! -name '*lock*' ! -name '.env' ! -name '.env.*' \
-      ! -name '*.pem' ! -name '*.key' ! -name '*.p12' ! -name '*.pfx' -print0)
+  # Android projects with a Gradle wrapper can produce APK/AAB files.
+  if [[ -f "$src/gradlew" ]]; then
+    chmod +x "$src/gradlew" 2>/dev/null || true
+    (cd "$src" && ./gradlew assembleDebug bundleDebug) >"$WORK/$slug-android.log" 2>&1 || true
+    status="Android Gradle build attempted"
   fi
 
-  # Copy every deliverable as its own uniquely named GitHub Release asset.
-  if [[ "$picked" -gt 0 ]]; then
-    while IFS= read -r -d '' file; do
-      rel="${file#"$dest/"}"
-      safe_rel="$(printf '%s' "$rel" | sed 's#[/ ]#_#g')"
-      cp "$file" "$ASSETS/${slug}__${safe_rel}"
-    done < <(find "$dest" -type f -print0)
-    echo "- Result: **$build_status** — $picked individual app files published." >> "$REPORT"
-    echo "- Files: `release-files/$slug/` (also published individually in the release)." >> "$REPORT"
-    ok=$((ok+1))
+  # Collect ONLY actual installable binaries. Never copy source, HTML, JS, CSS or ZIPs.
+  count=0
+  while IFS= read -r -d '' file; do
+    ext="${file##*.}"
+    ext="$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]')"
+    case "$ext" in
+      exe|msi|dmg|appimage|deb|rpm|apk|aab|ipa|pkg)
+        base="$(basename "$file")"
+        cp "$file" "$dest/$base"
+        cp "$file" "$ASSETS/${slug}__${PLATFORM}__${base}"
+        count=$((count+1))
+        ;;
+    esac
+  done < <(find "$src" -type f \
+    ! -path '*/node_modules/*' ! -path '*/.git/*' \
+    \( -path '*/dist/*' -o -path '*/build/*' -o -path '*/out/*' -o -path '*/release/*' -o -path '*/artifacts/*' -o -path '*/app/build/*' -o -path '*/android/app/build/*' \) -print0)
+
+  # Preserve a native macOS .app directory in the Actions artifact; GitHub releases get its DMG.
+  if [[ "$PLATFORM" == "macos" ]]; then
+    while IFS= read -r -d '' appdir; do
+      mkdir -p "$dest/$(basename "$appdir")"
+      cp -R "$appdir/." "$dest/$(basename "$appdir")/"
+      count=$((count+1))
+    done < <(find "$src" -type d -name '*.app' -print0)
+  fi
+
+  if [[ "$count" -gt 0 ]]; then
+    echo "- Result: **$status** — $count native installer/app deliverable(s)." >> "$REPORT"
+    success=$((success+1))
   else
-    echo "- Result: **NO APP OUTPUT FOUND** — no deployable files were generated." >> "$REPORT"
+    echo "- Result: **NO NATIVE INSTALLER** — $status. This project needs a desktop/mobile wrapper and platform build configuration before it can produce an EXE, APP/DMG, APK, etc." >> "$REPORT"
     failed=$((failed+1))
   fi
-
-  [[ -f "$WORK/$slug-build.log" ]] && cp "$WORK/$slug-build.log" "$dest/build.log"
-  [[ -f "$WORK/$slug-install.log" ]] && cp "$WORK/$slug-install.log" "$dest/install.log"
   echo >> "$REPORT"
 done
 
 cat >> "$REPORT" <<EOF
 
 ## Totals
-
-- Apps with files generated: $ok / ${#APPS[@]}
-- Apps with build/download problems: $failed
+- Apps with native deliverables: $success / ${#APPS[@]}
+- Apps without a native deliverable or with build errors: $failed
 - Apps skipped because token was missing: $skipped
 
-The Actions artifact keeps each app's folder structure. GitHub Release assets are separate individual files named `appname__relative_path`. No ZIPs or source-code archives are created.
+No source code or ZIP files are included. A website-only project cannot become an installable native app until it has a native wrapper (for example Electron, Tauri, Capacitor, or a native Android project).
 EOF
-
-echo "Generated files for $ok apps; $failed failed; $skipped skipped."
+echo "Native packages generated for $success apps; $failed without native packages; $skipped skipped."
