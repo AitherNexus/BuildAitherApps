@@ -10,7 +10,7 @@ mkdir -p "$OUT" "$WORK"
 : > "$REPORT"
 
 if [[ -z "${GITLAB_TOKEN:-}" ]]; then
-  echo "GITLAB_TOKEN is not set. Building public projects only; private projects will be listed as skipped."
+  echo "GITLAB_TOKEN was not supplied by Aither Backend. Private projects will be listed as skipped."
 fi
 
 cat > "$REPORT" <<EOF
@@ -72,7 +72,7 @@ for entry in "${APPS[@]}"; do
         clone_url="https://gitlab.com/$project.git"
         ;;
       *)
-        echo "- Result: **SKIPPED** — private GitLab repository; add the GITLAB_TOKEN Actions secret to include it." >> "$REPORT"
+        echo "- Result: **SKIPPED** — private GitLab repository; check the Aither Backend token endpoint and GitHub OIDC permissions." >> "$REPORT"
         echo >> "$REPORT"
         printf 'Private project. Add GITLAB_TOKEN to GitHub Actions secrets to download this app.\n' > "$dest/PRIVATE-REPOSITORY-NEEDS-TOKEN.txt"
         skipped=$((skipped+1))
