@@ -74,6 +74,7 @@ jobs:
           name: aither-nexus-all-apps-${{ github.run_number }}
           path: |
             release-files/
+            release-assets/
             BUILD-REPORT.md
             apps.json
           if-no-files-found: error
@@ -90,7 +91,7 @@ jobs:
           tag="aither-apps-build-${BUILD_NUMBER}"
           if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
             echo "Release $tag already exists; updating its app downloads."
-            gh release upload "$tag" release-files/*/*.zip \
+            gh release upload "$tag" release-assets/* \
               --repo "$GH_REPO" \
               --clobber
             gh release edit "$tag" \
@@ -98,7 +99,7 @@ jobs:
               --title "Aither Nexus Apps — Build #${BUILD_NUMBER}" \
               --notes-file BUILD-REPORT.md
           else
-            gh release create "$tag" release-files/*/*.zip \
+            gh release create "$tag" release-assets/* \
               --repo "$GH_REPO" \
               --title "Aither Nexus Apps — Build #${BUILD_NUMBER}" \
               --notes-file BUILD-REPORT.md
