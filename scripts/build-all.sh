@@ -45,7 +45,6 @@ APPS=(
   "AitherDashboard|aithernexus/AitherDashboard"
   "AitherNotes|aithernexus/AitherNotes"
   "AitherWeather|aithernexus/aitherweather"
-  "AitherBackend|aithernexus/AitherBackend"
   "AitherPrivacy|aithernexus/privacy"
   "AitherTerms|aithernexus/terms"
 )
@@ -69,7 +68,7 @@ for entry in "${APPS[@]}"; do
     clone_url="https://oauth2:${GITLAB_TOKEN}@gitlab.com/$project.git"
   else
     case "$project" in
-      aithernexus/AitherNexus|aithernexus/AitherBackend)
+      aithernexus/AitherNexus)
         clone_url="https://gitlab.com/$project.git"
         ;;
       *)
