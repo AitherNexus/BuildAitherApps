@@ -46,6 +46,12 @@ APPS=(
   "AitherTerms|aithernexus/terms"
 )
 
+# A product workflow sets APP_NAME and PROJECT_PATH to build exactly one repository.
+if [[ -n "${APP_NAME:-}" && -n "${PROJECT_PATH:-}" ]]; then
+  APPS=("${APP_NAME}|${PROJECT_PATH}")
+fi
+APP_COUNT="${APP_COUNT}"
+
 success=0
 failed=0
 skipped=0
