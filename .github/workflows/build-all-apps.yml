@@ -1,4 +1,4 @@
-name: Build All Aither Nexus Apps
+name: Build All Aither Nexus Native Apps
 
 on:
   workflow_dispatch:
@@ -15,92 +15,120 @@ permissions:
   id-token: write
 
 concurrency:
-  group: aither-nexus-app-build-${{ github.ref }}
+  group: aither-nexus-native-build-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   build:
-    name: Build app bundles
+    name: Build native apps (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+          - platform: macos
+            os: macos-latest
+          - platform: linux
+            os: ubuntu-latest
+  runs-on: ${{ matrix.os }}
+  timeout-minutes: 120
+  steps:
+    - name: Check out BuildAitherApps
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install Linux native build dependencies
+      if: matrix.platform == 'linux'
+      run: sudo apt-get update && sudo apt-get install -y build-essential curl wget file libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libwebkit2gtk-4.1-dev
+
+    - name: Set up Android SDK
+      if: matrix.platform == 'linux'
+      uses: android-actions/setup-android@v3
+
+    - name: Retrieve GitLab token securely from Aither Backend
+      shell: bash
+      run: |
+        set -euo pipefail
+        oidc_response="$(curl --fail --silent --show-error \
+          -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=aither-build-apps")"
+        oidc_token="$(jq -er '.value' <<< "$oidc_response")"
+        token_response="$(curl --fail --silent --show-error \
+          -H "Authorization: Bearer $oidc_token" \
+          "https://aitherbackend.onrender.com/api/build/gitlab-token")"
+        gitlab_token="$(jq -er '.token' <<< "$token_response")"
+        if [[ -z "$gitlab_token" ]]; then
+          echo "Aither Backend returned an empty GitLab token." >&2
+          exit 1
+        fi
+        echo "::add-mask::$gitlab_token"
+        printf 'GITLAB_TOKEN=%s\n' "$gitlab_token" >> "$GITHUB_ENV"
+
+    - name: Build native installers only
+      shell: bash
+      env:
+        BUILD_NUMBER: ${{ github.run_number }}
+        BUILD_COMMIT: ${{ github.sha }}
+        BUILD_PLATFORM: ${{ matrix.platform }}
+      run: bash scripts/build-all.sh
+
+    - name: Upload this platform's native app files
+      uses: actions/upload-artifact@v4
+      with:
+        name: aither-native-${{ matrix.platform }}-${{ github.run_number }}
+        path: |
+          release-files/
+          release-assets/
+          BUILD-REPORT.md
+        if-no-files-found: error
+        retention-days: 30
+        compression-level: 0
+
+  publish:
+    name: Publish individual native installers
+    needs: build
+    if: always() && needs.build.result != 'cancelled'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    permissions:
+      contents: write
     steps:
-      - name: Check out BuildAitherApps
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Download native app build artifacts
+        uses: actions/download-artifact@v4
         with:
-          node-version: "22"
+          pattern: aither-native-*-${{ github.run_number }}
+          path: combined
+          merge-multiple: true
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Set up Rust for Tauri desktop apps
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install packaging tools and desktop dependencies
-        run: sudo apt-get update && sudo apt-get install -y zip build-essential curl wget file libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libwebkit2gtk-4.1-dev
-
-      - name: Retrieve GitLab token securely from Aither Backend
-        shell: bash
-        run: |
-          set -euo pipefail
-          oidc_response="$(curl --fail --silent --show-error \
-            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=aither-build-apps")"
-          oidc_token="$(jq -er '.value' <<< "$oidc_response")"
-          token_response="$(curl --fail --silent --show-error \
-            -H "Authorization: Bearer $oidc_token" \
-            "https://aitherbackend.onrender.com/api/build/gitlab-token")"
-          gitlab_token="$(jq -er '.token' <<< "$token_response")"
-          if [[ -z "$gitlab_token" ]]; then
-            echo "Aither Backend returned an empty GitLab token." >&2
-            exit 1
-          fi
-          echo "::add-mask::$gitlab_token"
-          printf 'GITLAB_TOKEN=%s\n' "$gitlab_token" >> "$GITHUB_ENV"
-
-      - name: Build every Aither Nexus project
-        env:
-          BUILD_NUMBER: ${{ github.run_number }}
-          BUILD_COMMIT: ${{ github.sha }}
-        run: bash scripts/build-all.sh
-
-      - name: Upload complete build files
-        uses: actions/upload-artifact@v4
-        with:
-          name: aither-nexus-all-apps-${{ github.run_number }}
-          path: |
-            release-files/
-            release-assets/
-            BUILD-REPORT.md
-            apps.json
-          if-no-files-found: error
-          retention-days: 30
-          compression-level: 6
-
-      - name: Publish downloadable app bundles
+      - name: Publish EXE, DMG, APK, AppImage and other installer files
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           BUILD_NUMBER: ${{ github.run_number }}
         run: |
           set -euo pipefail
-          tag="aither-apps-build-${BUILD_NUMBER}"
-          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
-            echo "Release $tag already exists; updating its app downloads."
-            gh release upload "$tag" release-assets/* \
-              --repo "$GH_REPO" \
-              --clobber
-            gh release edit "$tag" \
-              --repo "$GH_REPO" \
-              --title "Aither Nexus Apps — Build #${BUILD_NUMBER}" \
-              --notes-file BUILD-REPORT.md
+          tag="aither-native-apps-build-${BUILD_NUMBER}"
+          mkdir -p release-assets
+          find combined -type f \( -iname '*.exe' -o -iname '*.msi' -o -iname '*.dmg' -o -iname '*.appimage' -o -iname '*.deb' -o -iname '*.rpm' -o -iname '*.apk' -o -iname '*.aab' -o -iname '*.ipa' -o -iname '*.pkg' \) -exec cp {} release-assets/ \;
+          if compgen -G 'release-assets/*' > /dev/null; then
+            if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+              gh release upload "$tag" release-assets/* --repo "$GH_REPO" --clobber
+              gh release edit "$tag" --repo "$GH_REPO" --title "Aither Nexus Native Apps — Build #${BUILD_NUMBER}" --notes "Individual native installers only. No source code or ZIP archives."
+            else
+              gh release create "$tag" release-assets/* --repo "$GH_REPO" --title "Aither Nexus Native Apps — Build #${BUILD_NUMBER}" --notes "Individual native installers only. No source code or ZIP archives."
+            fi
           else
-            gh release create "$tag" release-assets/* \
-              --repo "$GH_REPO" \
-              --title "Aither Nexus Apps — Build #${BUILD_NUMBER}" \
-              --notes-file BUILD-REPORT.md
+            echo "No native installer files were produced. Check the per-platform build artifacts and reports."
           fi
