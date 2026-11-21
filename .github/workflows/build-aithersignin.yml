@@ -1,0 +1,11 @@
+name: Build AitherSignIn
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-one-app.yml
+    with:
+      app_name: "AitherSignIn"
+      project_path: "aithernexus/aithersignin"
