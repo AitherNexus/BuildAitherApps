@@ -4,14 +4,11 @@ set +x
 
 ROOT="$(pwd)"
 OUT="$ROOT/release-files"
+ASSETS="$ROOT/release-assets"
 WORK="$ROOT/.build-work"
 REPORT="$ROOT/BUILD-REPORT.md"
-mkdir -p "$OUT" "$WORK"
+mkdir -p "$OUT" "$ASSETS" "$WORK"
 : > "$REPORT"
-
-if [[ -z "${GITLAB_TOKEN:-}" ]]; then
-  echo "GITLAB_TOKEN was not supplied by Aither Backend. Private projects will be listed as skipped."
-fi
 
 cat > "$REPORT" <<EOF
 # Aither Nexus Apps — Build Report
@@ -20,7 +17,7 @@ cat > "$REPORT" <<EOF
 - Commit: ${BUILD_COMMIT:-unknown}
 - Date: $(date -u +"%Y-%m-%d %H:%M UTC")
 
-This build downloads the app repositories from GitLab, attempts their available build scripts, and packages both source and generated output. Build failures are recorded per app so one broken project does not stop the rest.
+This build publishes individual app files. It does not create source-code archives or ZIP downloads.
 EOF
 
 # Display name | exact GitLab project path
@@ -52,6 +49,7 @@ APPS=(
 ok=0
 failed=0
 skipped=0
+
 for entry in "${APPS[@]}"; do
   app="${entry%%|*}"
   project="${entry#*|}"
@@ -60,185 +58,134 @@ for entry in "${APPS[@]}"; do
   dest="$OUT/$slug"
   mkdir -p "$dest"
   echo "## $app" >> "$REPORT"
-  echo "- GitLab: https://gitlab.com/$project" >> "$REPORT"
+  echo "- GitLab project: https://gitlab.com/$project" >> "$REPORT"
 
   rm -rf "$src"
-  clone_url=""
+  if [[ -z "${GITLAB_TOKEN:-}" && "$project" != "aithernexus/AitherNexus" ]]; then
+    echo "- Result: **SKIPPED** — GITLAB_TOKEN is missing." >> "$REPORT"
+    skipped=$((skipped+1))
+    echo >> "$REPORT"
+    continue
+  fi
+
   if [[ -n "${GITLAB_TOKEN:-}" ]]; then
     clone_url="https://oauth2:${GITLAB_TOKEN}@gitlab.com/$project.git"
   else
-    case "$project" in
-      aithernexus/AitherNexus)
-        clone_url="https://gitlab.com/$project.git"
-        ;;
-      *)
-        echo "- Result: **SKIPPED** — private GitLab repository; check the Aither Backend token endpoint and GitHub OIDC permissions." >> "$REPORT"
-        echo >> "$REPORT"
-        printf 'Private project. Add GITLAB_TOKEN to GitHub Actions secrets to download this app.\n' > "$dest/PRIVATE-REPOSITORY-NEEDS-TOKEN.txt"
-        skipped=$((skipped+1))
-        continue
-        ;;
-    esac
+    clone_url="https://gitlab.com/$project.git"
   fi
+
   if ! git -c advice.detachedHead=false clone --quiet --depth 1 "$clone_url" "$src" 2>"$WORK/$slug-clone.log"; then
-    echo "- Result: **DOWNLOAD FAILED** (check token access and project path)." >> "$REPORT"
-    cp "$WORK/$slug-clone.log" "$dest/clone-error.log" 2>/dev/null || true
+    echo "- Result: **DOWNLOAD FAILED** — see build artifact logs." >> "$REPORT"
+    cp "$WORK/$slug-clone.log" "$dest/download-error.txt" 2>/dev/null || true
     failed=$((failed+1))
     echo >> "$REPORT"
     continue
   fi
 
-  build_status="Source packaged; no build command detected"
+  build_status="No build configuration detected"
+  build_ok=1
   if [[ -f "$src/package.json" ]]; then
     pushd "$src" >/dev/null
     if [[ -f package-lock.json || -f npm-shrinkwrap.json ]]; then
-      if npm ci --no-audit --no-fund >"$WORK/$slug-npm-install.log" 2>&1; then
-        install_ok=1
-      else
-        install_ok=0
-      fi
+      npm ci --no-audit --no-fund >"$WORK/$slug-install.log" 2>&1 || build_ok=0
     else
-      if npm install --no-audit --no-fund >"$WORK/$slug-npm-install.log" 2>&1; then
-        install_ok=1
-      else
-        install_ok=0
-      fi
+      npm install --no-audit --no-fund >"$WORK/$slug-install.log" 2>&1 || build_ok=0
     fi
 
-    if [[ "$install_ok" == "1" ]]; then
-      build_ok=1
-      npm run build --if-present >"$WORK/$slug-build.log" 2>&1 || build_ok=0
-      # Desktop/Electron projects sometimes expose one of these packaging scripts.
-      node -e "const p=require('./package.json');process.exit(p.scripts?.dist?0:1)" 2>/dev/null && npm run dist >>"$WORK/$slug-build.log" 2>&1 || true
-      node -e "const p=require('./package.json');process.exit(p.scripts?.make?0:1)" 2>/dev/null && npm run make >>"$WORK/$slug-build.log" 2>&1 || true
-      node -e "const p=require('./package.json');process.exit(p.scripts?.package?0:1)" 2>/dev/null && npm run package >>"$WORK/$slug-build.log" 2>&1 || true
-
-      # Build native desktop packages when the project declares a supported toolchain.
-      desktop_status=""
-      if node -e "const p=require('./package.json');process.exit(p.devDependencies?.['electron-builder']||p.dependencies?.['electron-builder']?0:1)" 2>/dev/null; then
-        if npx electron-builder --win zip --linux AppImage deb >>"$WORK/$slug-build.log" 2>&1; then
-          desktop_status="Electron Builder Linux AppImage/DEB package built"
-        else
-          desktop_status="Electron Builder detected, but Linux installer build failed"
-          build_ok=0
-        fi
-      elif node -e "const p=require('./package.json');process.exit(p.devDependencies?.['@electron-forge/cli']||p.dependencies?.['@electron-forge/cli']?0:1)" 2>/dev/null; then
-        if npm run make >>"$WORK/$slug-build.log" 2>&1; then
-          desktop_status="Electron Forge desktop package built"
-        else
-          desktop_status="Electron Forge detected, but desktop packaging failed"
-          build_ok=0
-        fi
-      elif node -e "const p=require('./package.json');process.exit(p.scripts?.['tauri']||p.devDependencies?.['@tauri-apps/cli']||p.dependencies?.['@tauri-apps/cli']?0:1)" 2>/dev/null; then
-        if npm run tauri -- build >>"$WORK/$slug-build.log" 2>&1; then
-          desktop_status="Tauri desktop package built for the runner platform"
-        else
-          desktop_status="Tauri detected, but desktop packaging failed"
-          build_ok=0
-        fi
+    if [[ "$build_ok" == "1" ]]; then
+      if node -e "const p=require('./package.json');process.exit(p.scripts?.build?0:1)" 2>/dev/null; then
+        npm run build >"$WORK/$slug-build.log" 2>&1 || build_ok=0
+        build_status="npm build completed"
+      else
+        build_status="No npm build script; checking for deployable app files"
       fi
-      if [[ "$build_ok" == "1" ]]; then build_status="Build command completed"; else build_status="Build command failed; source and any generated output still packaged"; fi
-      [[ -n "$desktop_status" ]] && build_status="$build_status; $desktop_status"
+      # Only run desktop packaging scripts that the project explicitly defines.
+      if node -e "const p=require('./package.json');process.exit(p.scripts?.dist?0:1)" 2>/dev/null; then
+        npm run dist >>"$WORK/$slug-build.log" 2>&1 || build_ok=0
+      fi
+      if node -e "const p=require('./package.json');process.exit(p.scripts?.make?0:1)" 2>/dev/null; then
+        npm run make >>"$WORK/$slug-build.log" 2>&1 || build_ok=0
+      fi
+      if node -e "const p=require('./package.json');process.exit(p.scripts?.package?0:1)" 2>/dev/null; then
+        npm run package >>"$WORK/$slug-build.log" 2>&1 || build_ok=0
+      fi
     else
-      build_status="Dependency installation failed; source still packaged"
+      build_status="Dependency installation failed"
     fi
     popd >/dev/null
-  elif [[ -f "$src/pyproject.toml" || -f "$src/requirements.txt" || -f "$src"/*.py ]]; then
-    if python -m compileall -q "$src" >"$WORK/$slug-python.log" 2>&1; then
-      build_status="Python syntax compilation completed (dependencies not installed)"
-    else
-      build_status="Python syntax compilation failed; source still packaged"
-    fi
   fi
 
-  # Preserve the whole project source while excluding credentials and bulky dependencies.
-  (
-    cd "$src"
-    zip -qr "$dest/$slug-source.zip" . \
-      -x ".git/*" "node_modules/*" ".venv/*" "venv/*" \
-         ".env" ".env.*" "**/.env" "**/.env.*" \
-         "*.pem" "*.key" "*.p12" "*.pfx" "id_rsa" "id_ed25519"
-  )
-
-  # Publish generated build folders and desktop packages as a second download.
-  stage="$WORK/$slug-output"
-  rm -rf "$stage"
-  mkdir -p "$stage"
-  found=0
-  for folder in dist build out public desktop artifacts release; do
+  # Collect only deployable output, never the repository/source tree or node_modules.
+  picked=0
+  for folder in dist build out release artifacts; do
     if [[ -d "$src/$folder" ]]; then
-      mkdir -p "$stage/$folder"
-      cp -a "$src/$folder/." "$stage/$folder/"
-      found=1
+      while IFS= read -r -d '' file; do
+        rel="${file#"$src/$folder/"}"
+        mkdir -p "$dest/$(dirname "$rel")"
+        cp "$file" "$dest/$rel"
+        picked=$((picked+1))
+      done < <(find "$src/$folder" -type f \
+        ! -path '*/node_modules/*' ! -name '.env' ! -name '.env.*' \
+        ! -name '*.pem' ! -name '*.key' ! -name '*.p12' ! -name '*.pfx' -print0)
     fi
   done
-  # Also include the complete static website tree so HTML/CSS/JS/assets are individually accessible.
-  if [[ -f "$src/index.html" ]]; then
-    mkdir -p "$stage/site"
-    cp -a "$src/." "$stage/site/"
-    rm -rf "$stage/site/.git" "$stage/site/node_modules" "$stage/site/.venv" "$stage/site/venv"
-    find "$stage/site" -type f \( -name '.env' -o -name '.env.*' -o -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.pfx' \) -delete
-    found=1
+
+  # Static sites without a build output are still publishable from their public web root.
+  if [[ "$picked" -eq 0 ]]; then
+    for folder in public; do
+      if [[ -d "$src/$folder" ]]; then
+        while IFS= read -r -d '' file; do
+          rel="${file#"$src/$folder/"}"
+          mkdir -p "$dest/$(dirname "$rel")"
+          cp "$file" "$dest/$rel"
+          picked=$((picked+1))
+        done < <(find "$src/$folder" -type f \
+          ! -path '*/node_modules/*' ! -name '.env' ! -name '.env.*' \
+          ! -name '*.pem' ! -name '*.key' ! -name '*.p12' ! -name '*.pfx' -print0)
+      fi
+    done
   fi
-  # Every project gets a distinct app download plus separate source/build archives.
-  if [[ "$found" == "1" ]]; then
-    (cd "$stage" && zip -qr "$dest/$slug-build-output.zip" .)
-    cat > "$stage/APP-DOWNLOAD-README.md" <<APPREADME
-# $app app download
-
-This archive contains generated app files from the latest build attempt.
-Use a platform installer in the archive when one is present. For web apps,
-serve the included site/build folder using a static web server.
-
-Build status: $build_status
-Source code: https://gitlab.com/$project
-APPREADME
-  else
-    mkdir -p "$stage/project-source"
-    (cd "$src" && zip -qr "$stage/project-source/$slug-source.zip" . -x ".git/*" "node_modules/*" ".venv/*" "venv/*" ".env" ".env.*" "**/.env" "**/.env.*" "*.pem" "*.key" "*.p12" "*.pfx")
-    cat > "$stage/APP-DOWNLOAD-README.md" <<APPREADME
-# $app app download
-
-No generated installer/build folder was detected in this run.
-The project source is included in this app bundle, but it still needs
-its project-specific build/runtime setup before native installation.
-
-Build status: $build_status
-Source code: https://gitlab.com/$project
-APPREADME
+  if [[ "$picked" -eq 0 && -f "$src/index.html" ]]; then
+    while IFS= read -r -d '' file; do
+      rel="${file#"$src/"}"
+      mkdir -p "$dest/$(dirname "$rel")"
+      cp "$file" "$dest/$rel"
+      picked=$((picked+1))
+    done < <(find "$src" -maxdepth 3 -type f \
+      ! -path '*/.git/*' ! -path '*/node_modules/*' ! -path '*/desktop/*' \
+      ! -name 'package.json' ! -name '*lock*' ! -name '.env' ! -name '.env.*' \
+      ! -name '*.pem' ! -name '*.key' ! -name '*.p12' ! -name '*.pfx' -print0)
   fi
-  (cd "$stage" && zip -qr "$dest/$slug-app.zip" .)
 
-  printf '# %s\n\n- GitLab project: https://gitlab.com/%s\n- Build result: %s\n- Source archive: %s-source.zip\n' "$app" "$project" "$build_status" "$slug" > "$dest/BUILD-INFO.md"
-  [[ -f "$WORK/$slug-build.log" ]] && cp "$WORK/$slug-build.log" "$dest/build.log"
-  [[ -f "$WORK/$slug-npm-install.log" ]] && cp "$WORK/$slug-npm-install.log" "$dest/install.log"
-  [[ -f "$WORK/$slug-python.log" ]] && cp "$WORK/$slug-python.log" "$dest/python-check.log"
-
-  echo "- Result: **$build_status**" >> "$REPORT"
-  echo "- Individual app download: [$slug-app.zip](https://github.com/$GITHUB_REPOSITORY/releases/download/aither-apps-build-${BUILD_NUMBER:-local}/$slug-app.zip)" >> "$REPORT"
-  echo "- Source archive: [$slug-source.zip](https://github.com/$GITHUB_REPOSITORY/releases/download/aither-apps-build-${BUILD_NUMBER:-local}/$slug-source.zip)" >> "$REPORT"
-  if [[ -f "$dest/$slug-build-output.zip" ]]; then
-    echo "- Build output: [$slug-build-output.zip](https://github.com/$GITHUB_REPOSITORY/releases/download/aither-apps-build-${BUILD_NUMBER:-local}/$slug-build-output.zip)" >> "$REPORT"
-  fi
-  echo >> "$REPORT"
-  if [[ "$build_status" == *failed* || "$build_status" == *Failure* ]]; then
-    failed=$((failed+1))
-  else
+  # Copy every deliverable as its own uniquely named GitHub Release asset.
+  if [[ "$picked" -gt 0 ]]; then
+    while IFS= read -r -d '' file; do
+      rel="${file#"$dest/"}"
+      safe_rel="$(printf '%s' "$rel" | sed 's#[/ ]#_#g')"
+      cp "$file" "$ASSETS/${slug}__${safe_rel}"
+    done < <(find "$dest" -type f -print0)
+    echo "- Result: **$build_status** — $picked individual app files published." >> "$REPORT"
+    echo "- Files: `release-files/$slug/` (also published individually in the release)." >> "$REPORT"
     ok=$((ok+1))
+  else
+    echo "- Result: **NO APP OUTPUT FOUND** — no deployable files were generated." >> "$REPORT"
+    failed=$((failed+1))
   fi
+
+  [[ -f "$WORK/$slug-build.log" ]] && cp "$WORK/$slug-build.log" "$dest-build.log"
+  [[ -f "$WORK/$slug-install.log" ]] && cp "$WORK/$slug-install.log" "$dest-install.log"
+  echo >> "$REPORT"
 done
 
 cat >> "$REPORT" <<EOF
 
 ## Totals
 
-- Projects packaged: $((ok+failed)) / ${#APPS[@]}
-- Completed without reported build errors: $ok
-- Projects with build/download issues: $failed
-- Private projects skipped because GITLAB_TOKEN is missing: $skipped
+- Apps with files generated: $ok / ${#APPS[@]}
+- Apps with build/download problems: $failed
+- Apps skipped because token was missing: $skipped
 
-Each app folder in release-files/ contains its source archive, generated output archive when available, build information, and relevant logs.
+The Actions artifact keeps each app's folder structure. GitHub Release assets are separate individual files named `appname__relative_path`. No ZIPs or source-code archives are created.
 EOF
 
-# Always let the workflow publish successful packages and the report.
-echo "Packaged $((ok+failed)) projects; skipped $skipped private projects; $failed had issues."
+echo "Generated files for $ok apps; $failed failed; $skipped skipped."
