@@ -4,16 +4,11 @@ One place to build and download the Aither Nexus apps.
 
 This repository uses **GitHub Actions** to clone the Aither Nexus projects from GitLab, run their available build scripts, and publish downloadable bundles.
 
-## One-time setup (required for private projects)
+## Secure GitLab access
 
-Most Aither Nexus repositories are private on GitLab. Without a token, the workflow still packages the public AitherNexus portal and marks private projects as skipped. To build the complete app list, create a GitLab Personal Access Token with **read_repository** scope, then add it to this GitHub repository:
+BuildAitherApps retrieves the existing `GITLAB_TOKEN` from Aither Backend at build time. GitHub Actions requests a short-lived GitHub OIDC identity token and sends it to `https://aitherbackend.onrender.com/api/build/gitlab-token`. Aither Backend verifies that the caller is this repository's workflow on `main` before returning the token. The GitLab token is not stored as a GitHub secret, printed in logs, or included in app archives.
 
-1. Open **Settings → Secrets and variables → Actions**.
-2. Choose **New repository secret**.
-3. Name it exactly `GITLAB_TOKEN`.
-4. Paste the GitLab token as the value and save.
-
-The token is only used by the workflow to clone your GitLab projects. It is not written into the generated archives or logs. Do not put it in a file or commit it. After saving the secret, run the workflow again to build all private projects too.
+The workflow requires the `id-token: write` permission, which is configured in the workflow file. Aither Backend must have its `GITLAB_TOKEN` environment variable set. Only the `AitherNexus/BuildAitherApps` workflow on `main` is allowed to request it.
 
 ## Run a build
 
