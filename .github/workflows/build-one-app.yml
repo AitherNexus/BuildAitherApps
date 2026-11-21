@@ -1,0 +1,128 @@
+name: Build One Aither Product
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        description: Aither product name
+        required: true
+        type: string
+      project_path:
+        description: GitLab project path
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build:
+    name: ${{ inputs.app_name }} — ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+          - platform: macos
+            os: macos-latest
+          - platform: linux
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - name: Check out build tools
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux native dependencies
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential curl wget file libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libwebkit2gtk-4.1-dev
+
+      - name: Set up Android SDK
+        if: matrix.platform == 'linux'
+        uses: android-actions/setup-android@v3
+
+      - name: Retrieve GitLab token from Aither Backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_response="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=aither-build-apps")"
+          oidc_token="$(jq -er '.value' <<< "$oidc_response")"
+          token_response="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $oidc_token" \
+            "https://aitherbackend.onrender.com/api/build/gitlab-token")"
+          gitlab_token="$(jq -er '.token' <<< "$token_response")"
+          test -n "$gitlab_token"
+          echo "::add-mask::$gitlab_token"
+          printf 'GITLAB_TOKEN=%s\\n' "$gitlab_token" >> "$GITHUB_ENV"
+
+      - name: Build this product's native installers
+        shell: bash
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          BUILD_COMMIT: ${{ github.sha }}
+          BUILD_PLATFORM: ${{ matrix.platform }}
+          APP_NAME: ${{ inputs.app_name }}
+          PROJECT_PATH: ${{ inputs.project_path }}
+        run: bash scripts/build-all.sh
+
+      - name: Upload product build and report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.app_name }}-${{ matrix.platform }}-${{ github.run_number }}
+          path: |
+            release-files/
+            release-assets/
+            BUILD-REPORT.md
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+  publish:
+    name: Publish ${{ inputs.app_name }} installers
+    needs: build
+    if: always() && needs.build.result != 'cancelled'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download this product's build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ inputs.app_name }}-*-${{ github.run_number }}
+          path: combined
+          merge-multiple: true
+
+      - name: Publish individual native installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          APP_NAME: ${{ inputs.app_name }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          slug="$(printf '%s' "$APP_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')"
+          tag="aither-${slug}-native-build-${BUILD_NUMBER}"
+          mkdir -p release-assets
+          find combined -type f \\( -iname '*.exe' -o -iname '*.msi' -o -iname '*.dmg' -o -iname '*.appimage' -o -iname '*.deb' -o -iname '*.rpm' -o -iname '*.apk' -o -iname '*.aab' -o -iname '*.ipa' -o -iname '*.pkg' \\) -exec cp {} release-assets/ \\;
+          if compgen -G 'release-assets/*' > /dev/null; then
+            gh release create "$tag" release-assets/* --repo "$GH_REPO" --title "$APP_NAME — Native Build #${BUILD_NUMBER}" --notes "Individual native installers for $APP_NAME. No source code or ZIP archives."
+          else
+            echo "No native installer was produced for $APP_NAME. See the uploaded build report."
+          fi
