@@ -1,0 +1,11 @@
+name: Build AitherDashboard
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-one-app.yml
+    with:
+      app_name: "AitherDashboard"
+      project_path: "aithernexus/AitherDashboard"
