@@ -73,7 +73,7 @@ for entry in "${APPS[@]}"; do
         clone_url="https://gitlab.com/$project.git"
         ;;
       *)
-        echo "- Result: **SKIPPED** — private GitLab repository; add the `GITLAB_TOKEN` Actions secret to include it." >> "$REPORT"
+        echo "- Result: **SKIPPED** — private GitLab repository; add the GITLAB_TOKEN Actions secret to include it." >> "$REPORT"
         echo >> "$REPORT"
         printf 'Private project. Add GITLAB_TOKEN to GitHub Actions secrets to download this app.\n' > "$dest/PRIVATE-REPOSITORY-NEEDS-TOKEN.txt"
         skipped=$((skipped+1))
@@ -147,10 +147,18 @@ for entry in "${APPS[@]}"; do
       found=1
     fi
   done
+  # Also include the complete static website tree so HTML/CSS/JS/assets are individually accessible.
+  if [[ -f "$src/index.html" ]]; then
+    mkdir -p "$stage/site"
+    cp -a "$src/." "$stage/site/"
+    rm -rf "$stage/site/.git" "$stage/site/node_modules" "$stage/site/.venv" "$stage/site/venv"
+    find "$stage/site" -type f \( -name '.env' -o -name '.env.*' -o -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.pfx' \) -delete
+    found=1
+  fi
   if [[ "$found" == "1" ]]; then
     (cd "$stage" && zip -qr "$dest/$slug-build-output.zip" .)
   else
-    printf '%s\n' "No separate build-output directory was generated. The complete project is available in the source archive." > "$dest/BUILD-OUTPUT-NOT-FOUND.txt"
+    printf '%s\n' "No separate build-output directory or static index.html was generated. The complete project is available in the source archive." > "$dest/BUILD-OUTPUT-NOT-FOUND.txt"
   fi
 
   printf '# %s\n\n- GitLab project: https://gitlab.com/%s\n- Build result: %s\n- Source archive: %s-source.zip\n' "$app" "$project" "$build_status" "$slug" > "$dest/BUILD-INFO.md"
@@ -159,7 +167,7 @@ for entry in "${APPS[@]}"; do
   [[ -f "$WORK/$slug-python.log" ]] && cp "$WORK/$slug-python.log" "$dest/python-check.log"
 
   echo "- Result: **$build_status**" >> "$REPORT"
-  echo "- Downloads: `$slug-source.zip` and generated build output when available." >> "$REPORT"
+  echo "- Downloads: $slug-source.zip and generated build output when available." >> "$REPORT"
   echo >> "$REPORT"
   if [[ "$build_status" == *failed* || "$build_status" == *Failure* ]]; then
     failed=$((failed+1))
@@ -177,7 +185,7 @@ cat >> "$REPORT" <<EOF
 - Projects with build/download issues: $failed
 - Private projects skipped because GITLAB_TOKEN is missing: $skipped
 
-Each app folder in `release-files/` contains its source archive, generated output archive when available, build information, and relevant logs.
+Each app folder in release-files/ contains its source archive, generated output archive when available, build information, and relevant logs.
 EOF
 
 # Always let the workflow publish successful packages and the report.
