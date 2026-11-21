@@ -117,7 +117,7 @@ for entry in "${APPS[@]}"; do
       # Build native desktop packages when the project declares a supported toolchain.
       desktop_status=""
       if node -e "const p=require('./package.json');process.exit(p.devDependencies?.['electron-builder']||p.dependencies?.['electron-builder']?0:1)" 2>/dev/null; then
-        if npx electron-builder --linux AppImage deb >>"$WORK/$slug-build.log" 2>&1; then
+        if npx electron-builder --win zip --linux AppImage deb >>"$WORK/$slug-build.log" 2>&1; then
           desktop_status="Electron Builder Linux AppImage/DEB package built"
         else
           desktop_status="Electron Builder detected, but Linux installer build failed"
@@ -216,10 +216,10 @@ APPREADME
   [[ -f "$WORK/$slug-python.log" ]] && cp "$WORK/$slug-python.log" "$dest/python-check.log"
 
   echo "- Result: **$build_status**" >> "$REPORT"
-  echo "- Individual app download: [$slug-app.zip](https://github.com/$GITHUB_REPOSITORY/releases/download/aither-apps-build-\${BUILD_NUMBER:-local}/$slug-app.zip)" >> "$REPORT"
-  echo "- Source archive: [$slug-source.zip](https://github.com/$GITHUB_REPOSITORY/releases/download/aither-apps-build-\${BUILD_NUMBER:-local}/$slug-source.zip)" >> "$REPORT"
+  echo "- Individual app download: [$slug-app.zip](https://github.com/$GITHUB_REPOSITORY/releases/download/aither-apps-build-${BUILD_NUMBER:-local}/$slug-app.zip)" >> "$REPORT"
+  echo "- Source archive: [$slug-source.zip](https://github.com/$GITHUB_REPOSITORY/releases/download/aither-apps-build-${BUILD_NUMBER:-local}/$slug-source.zip)" >> "$REPORT"
   if [[ -f "$dest/$slug-build-output.zip" ]]; then
-    echo "- Build output: [$slug-build-output.zip](https://github.com/$GITHUB_REPOSITORY/releases/download/aither-apps-build-\${BUILD_NUMBER:-local}/$slug-build-output.zip)" >> "$REPORT"
+    echo "- Build output: [$slug-build-output.zip](https://github.com/$GITHUB_REPOSITORY/releases/download/aither-apps-build-${BUILD_NUMBER:-local}/$slug-build-output.zip)" >> "$REPORT"
   fi
   echo >> "$REPORT"
   if [[ "$build_status" == *failed* || "$build_status" == *Failure* ]]; then
