@@ -31,71 +31,71 @@ jobs:
             os: macos-latest
           - platform: linux
             os: ubuntu-latest
-  runs-on: ${{ matrix.os }}
-  timeout-minutes: 120
-  steps:
-    - name: Check out BuildAitherApps
-      uses: actions/checkout@v4
-
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: "22"
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.12"
-
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Install Linux native build dependencies
-      if: matrix.platform == 'linux'
-      run: sudo apt-get update && sudo apt-get install -y build-essential curl wget file libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libwebkit2gtk-4.1-dev
-
-    - name: Set up Android SDK
-      if: matrix.platform == 'linux'
-      uses: android-actions/setup-android@v3
-
-    - name: Retrieve GitLab token securely from Aither Backend
-      shell: bash
-      run: |
-        set -euo pipefail
-        oidc_response="$(curl --fail --silent --show-error \
-          -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=aither-build-apps")"
-        oidc_token="$(jq -er '.value' <<< "$oidc_response")"
-        token_response="$(curl --fail --silent --show-error \
-          -H "Authorization: Bearer $oidc_token" \
-          "https://aitherbackend.onrender.com/api/build/gitlab-token")"
-        gitlab_token="$(jq -er '.token' <<< "$token_response")"
-        if [[ -z "$gitlab_token" ]]; then
-          echo "Aither Backend returned an empty GitLab token." >&2
-          exit 1
-        fi
-        echo "::add-mask::$gitlab_token"
-        printf 'GITLAB_TOKEN=%s\n' "$gitlab_token" >> "$GITHUB_ENV"
-
-    - name: Build native installers only
-      shell: bash
-      env:
-        BUILD_NUMBER: ${{ github.run_number }}
-        BUILD_COMMIT: ${{ github.sha }}
-        BUILD_PLATFORM: ${{ matrix.platform }}
-      run: bash scripts/build-all.sh
-
-    - name: Upload this platform's native app files
-      uses: actions/upload-artifact@v4
-      with:
-        name: aither-native-${{ matrix.platform }}-${{ github.run_number }}
-        path: |
-          release-files/
-          release-assets/
-          BUILD-REPORT.md
-        if-no-files-found: error
-        retention-days: 30
-        compression-level: 0
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - name: Check out BuildAitherApps
+        uses: actions/checkout@v4
+  
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+  
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+  
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+  
+      - name: Install Linux native build dependencies
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential curl wget file libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libwebkit2gtk-4.1-dev
+  
+      - name: Set up Android SDK
+        if: matrix.platform == 'linux'
+        uses: android-actions/setup-android@v3
+  
+      - name: Retrieve GitLab token securely from Aither Backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_response="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=aither-build-apps")"
+          oidc_token="$(jq -er '.value' <<< "$oidc_response")"
+          token_response="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $oidc_token" \
+            "https://aitherbackend.onrender.com/api/build/gitlab-token")"
+          gitlab_token="$(jq -er '.token' <<< "$token_response")"
+          if [[ -z "$gitlab_token" ]]; then
+            echo "Aither Backend returned an empty GitLab token." >&2
+            exit 1
+          fi
+          echo "::add-mask::$gitlab_token"
+          printf 'GITLAB_TOKEN=%s\n' "$gitlab_token" >> "$GITHUB_ENV"
+  
+      - name: Build native installers only
+        shell: bash
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          BUILD_COMMIT: ${{ github.sha }}
+          BUILD_PLATFORM: ${{ matrix.platform }}
+        run: bash scripts/build-all.sh
+  
+      - name: Upload this platform's native app files
+        uses: actions/upload-artifact@v4
+        with:
+          name: aither-native-${{ matrix.platform }}-${{ github.run_number }}
+          path: |
+            release-files/
+            release-assets/
+            BUILD-REPORT.md
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
 
   publish:
     name: Publish individual native installers
