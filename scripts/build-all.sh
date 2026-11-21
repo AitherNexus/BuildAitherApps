@@ -172,8 +172,8 @@ for entry in "${APPS[@]}"; do
     failed=$((failed+1))
   fi
 
-  [[ -f "$WORK/$slug-build.log" ]] && cp "$WORK/$slug-build.log" "$dest-build.log"
-  [[ -f "$WORK/$slug-install.log" ]] && cp "$WORK/$slug-install.log" "$dest-install.log"
+  [[ -f "$WORK/$slug-build.log" ]] && cp "$WORK/$slug-build.log" "$dest/build.log"
+  [[ -f "$WORK/$slug-install.log" ]] && cp "$WORK/$slug-install.log" "$dest/install.log"
   echo >> "$REPORT"
 done
 
