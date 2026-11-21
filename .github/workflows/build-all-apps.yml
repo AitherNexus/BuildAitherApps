@@ -6,6 +6,8 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/build-all-apps.yml"
+      - ".github/workflows/build-one-app.yml"
+      - ".github/workflows/build-*.yml"
       - "scripts/**"
       - "apps.json"
       - "README.md"
@@ -19,116 +21,59 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build native apps (${{ matrix.platform }})
+  build-products:
+    name: Build ${{ matrix.app_name }} and publish its own release
     strategy:
       fail-fast: false
+      # Process one product at a time to avoid launching dozens of native runners together.
+      max-parallel: 1
       matrix:
         include:
-          - platform: windows
-            os: windows-latest
-          - platform: macos
-            os: macos-latest
-          - platform: linux
-            os: ubuntu-latest
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
-    steps:
-      - name: Check out BuildAitherApps
-        uses: actions/checkout@v4
-  
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-  
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-  
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-  
-      - name: Install Linux native build dependencies
-        if: matrix.platform == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y build-essential curl wget file libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libwebkit2gtk-4.1-dev
-  
-      - name: Set up Android SDK
-        if: matrix.platform == 'linux'
-        uses: android-actions/setup-android@v3
-  
-      - name: Retrieve GitLab token securely from Aither Backend
-        shell: bash
-        run: |
-          set -euo pipefail
-          oidc_response="$(curl --fail --silent --show-error \
-            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=aither-build-apps")"
-          oidc_token="$(jq -er '.value' <<< "$oidc_response")"
-          token_response="$(curl --fail --silent --show-error \
-            -H "Authorization: Bearer $oidc_token" \
-            "https://aitherbackend.onrender.com/api/build/gitlab-token")"
-          gitlab_token="$(jq -er '.token' <<< "$token_response")"
-          if [[ -z "$gitlab_token" ]]; then
-            echo "Aither Backend returned an empty GitLab token." >&2
-            exit 1
-          fi
-          echo "::add-mask::$gitlab_token"
-          printf 'GITLAB_TOKEN=%s\n' "$gitlab_token" >> "$GITHUB_ENV"
-  
-      - name: Build native installers only
-        shell: bash
-        env:
-          BUILD_NUMBER: ${{ github.run_number }}
-          BUILD_COMMIT: ${{ github.sha }}
-          BUILD_PLATFORM: ${{ matrix.platform }}
-        run: bash scripts/build-all.sh
-  
-      - name: Upload this platform's native app files
-        uses: actions/upload-artifact@v4
-        with:
-          name: aither-native-${{ matrix.platform }}-${{ github.run_number }}
-          path: |
-            release-files/
-            release-assets/
-            BUILD-REPORT.md
-          if-no-files-found: error
-          retention-days: 30
-          compression-level: 0
-
-  publish:
-    name: Publish individual native installers
-    needs: build
-    if: always() && needs.build.result != 'cancelled'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download native app build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: aither-native-*-${{ github.run_number }}
-          path: combined
-          merge-multiple: true
-
-      - name: Publish EXE, DMG, APK, AppImage and other installer files
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          BUILD_NUMBER: ${{ github.run_number }}
-        run: |
-          set -euo pipefail
-          tag="aither-native-apps-build-${BUILD_NUMBER}"
-          mkdir -p release-assets
-          find combined -type f \( -iname '*.exe' -o -iname '*.msi' -o -iname '*.dmg' -o -iname '*.appimage' -o -iname '*.deb' -o -iname '*.rpm' -o -iname '*.apk' -o -iname '*.aab' -o -iname '*.ipa' -o -iname '*.pkg' \) -exec cp {} release-assets/ \;
-          if compgen -G 'release-assets/*' > /dev/null; then
-            if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
-              gh release upload "$tag" release-assets/* --repo "$GH_REPO" --clobber
-              gh release edit "$tag" --repo "$GH_REPO" --title "Aither Nexus Native Apps — Build #${BUILD_NUMBER}" --notes "Individual native installers only. No source code or ZIP archives."
-            else
-              gh release create "$tag" release-assets/* --repo "$GH_REPO" --title "Aither Nexus Native Apps — Build #${BUILD_NUMBER}" --notes "Individual native installers only. No source code or ZIP archives."
-            fi
-          else
-            echo "No native installer files were produced. Check the per-platform build artifacts and reports."
-          fi
+          - app_name: AitherCore
+            project_path: aithernexus/aithercore
+          - app_name: AitherHomeOS
+            project_path: aithernexus/aitherhomeos
+          - app_name: AitherCloud
+            project_path: aithernexus/aithercloud
+          - app_name: AitherChat
+            project_path: aithernexus/aitherchat
+          - app_name: AitherSignIn
+            project_path: aithernexus/aithersignin
+          - app_name: AitherNexus
+            project_path: aithernexus/AitherNexus
+          - app_name: AitherWeb
+            project_path: aithernexus/AitherWeb
+          - app_name: AitherGaming
+            project_path: aithernexus/AitherGaming
+          - app_name: AitherMail
+            project_path: aithernexus/AitherMail
+          - app_name: AitherAppDownloads
+            project_path: aithernexus/AitherAppDounloads
+          - app_name: AitherApps
+            project_path: aithernexus/AitherApps
+          - app_name: AitherFiles
+            project_path: aithernexus/AitherFiles
+          - app_name: AitherError404
+            project_path: aithernexus/AitherError404
+          - app_name: AitherClock
+            project_path: aithernexus/AitherClock
+          - app_name: AitherAI
+            project_path: aithernexus/AitherAI
+          - app_name: AitherCalculator
+            project_path: aithernexus/AitherCalculator
+          - app_name: AitherMaps
+            project_path: aithernexus/AitherMaps
+          - app_name: AitherDashboard
+            project_path: aithernexus/AitherDashboard
+          - app_name: AitherNotes
+            project_path: aithernexus/AitherNotes
+          - app_name: AitherWeather
+            project_path: aithernexus/aitherweather
+          - app_name: AitherPrivacy
+            project_path: aithernexus/privacy
+          - app_name: AitherTerms
+            project_path: aithernexus/terms
+    uses: ./.github/workflows/build-one-app.yml
+    with:
+      app_name: ${{ matrix.app_name }}
+      project_path: ${{ matrix.project_path }}
