@@ -6,7 +6,7 @@ This repository uses **GitHub Actions** to clone the Aither Nexus projects from 
 
 ## One-time setup (required for private projects)
 
-Most Aither Nexus repositories are private on GitLab. Without a token, the workflow still packages the public AitherNexus portal and AitherBackend, and marks private projects as skipped. To build the complete app list, create a GitLab Personal Access Token with **read_repository** scope, then add it to this GitHub repository:
+Most Aither Nexus repositories are private on GitLab. Without a token, the workflow still packages the public AitherNexus portal and marks private projects as skipped. To build the complete app list, create a GitLab Personal Access Token with **read_repository** scope, then add it to this GitHub repository:
 
 1. Open **Settings → Secrets and variables → Actions**.
 2. Choose **New repository secret**.
@@ -36,7 +36,7 @@ Open [latest builds](../../actions/workflows/build-all-apps.yml) or [releases](.
 
 ## What gets included
 
-The build list is in [apps.json](apps.json). It currently includes the active Aither Nexus apps and supporting projects: AitherCore, AitherHomeOS, AitherCloud, AitherChat, AitherSignIn, AitherNexus, AitherWeb, AitherGaming, AitherMail, AitherAppDownloads, AitherApps, AitherFiles, AitherError404, AitherClock, AitherAI, AitherCalculator, AitherMaps, AitherDashboard, AitherNotes, AitherWeather, AitherBackend, AitherPrivacy, and AitherTerms.
+The build list is in [apps.json](apps.json). It currently includes the active Aither Nexus apps and supporting projects: AitherCore, AitherHomeOS, AitherCloud, AitherChat, AitherSignIn, AitherNexus, AitherWeb, AitherGaming, AitherMail, AitherAppDownloads, AitherApps, AitherFiles, AitherError404, AitherClock, AitherAI, AitherCalculator, AitherMaps, AitherDashboard, AitherNotes, AitherWeather, AitherPrivacy, and AitherTerms.
 
 For each project, the workflow creates an individual app ZIP, a source ZIP, and (when generated) a separate build-output ZIP. It attempts the project's npm build and desktop packaging scripts, and collects generated `dist`, `build`, `out`, `public`, `desktop`, `artifacts`, and `release` folders.
 
