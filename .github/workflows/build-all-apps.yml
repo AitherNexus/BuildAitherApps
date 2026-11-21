@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: aither-nexus-app-build-${{ github.ref }}
@@ -42,9 +43,27 @@ jobs:
       - name: Install packaging tools and desktop dependencies
         run: sudo apt-get update && sudo apt-get install -y zip build-essential curl wget file libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libwebkit2gtk-4.1-dev
 
+      - name: Retrieve GitLab token securely from Aither Backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_response="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=aither-build-apps")"
+          oidc_token="$(jq -er '.value' <<< "$oidc_response")"
+          token_response="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $oidc_token" \
+            "https://aitherbackend.onrender.com/api/build/gitlab-token")"
+          gitlab_token="$(jq -er '.token' <<< "$token_response")"
+          if [[ -z "$gitlab_token" ]]; then
+            echo "Aither Backend returned an empty GitLab token." >&2
+            exit 1
+          fi
+          echo "::add-mask::$gitlab_token"
+          printf 'GITLAB_TOKEN=%s\\n' "$gitlab_token" >> "$GITHUB_ENV"
+
       - name: Build every Aither Nexus project
         env:
-          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
           BUILD_NUMBER: ${{ github.run_number }}
           BUILD_COMMIT: ${{ github.sha }}
         run: bash scripts/build-all.sh
